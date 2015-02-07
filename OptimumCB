@@ -1,0 +1,509 @@
+#! /usr/bin/python
+
+# This line is a comment
+#    This file is part of DEAP.
+#
+#    DEAP is free software: you can redistribute it and/or modify
+#    it under the terms of the GNU Lesser General Public License as
+#    published by the Free Software Foundation, either version 3 of
+#    the License, or (at your option) any later version.
+#
+#    DEAP is distributed in the hope that it will be useful,
+#    but WITHOUT ANY WARRANTY; without even the implied warranty of
+#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+#    GNU Lesser General Public License for more details.
+#
+#    You should have received a copy of the GNU Lesser General Public
+#    License along with DEAP. If not, see <http://www.gnu.org/licenses/>.
+
+
+#   Read carefully all the comments.
+
+import os,sys
+sys.path.insert(0,'C:\\Program Files (x86)\\PTI\\PSSE33\\PSSBIN') # Select the path where you have PSS/E installed
+os.environ['PATH'] = 'C:\\Program Files (x86)\\PTI\\PSSE33\\PSSBIN'+';'+os.environ['PATH'] # Select the path where you have PSS/E installed
+from pylab import *
+import networklosses # File with functions that evaluates network losses 
+import fitness # File that evaluates each candidate solution
+
+from itertools import groupby
+from operator import itemgetter
+attr_type = itemgetter(0)
+
+import psspy
+
+from deap import base # This is the package for genetic algorithms (DEAP)
+from deap import creator
+from deap import tools
+
+
+__author__="HMLE"
+__date__ ="$07.feb.2015 17:00:00$"
+
+if __name__ == "__main__":
+    print "";
+
+
+creator.create("FitnessMin", base.Fitness, weights=(-1.0,))
+creator.create("Individual", list, fitness=creator.FitnessMin)
+
+#-------------- DATA NEEDED TO DEFINE CODIFICATION
+global buses, x_size
+
+
+#----------------------2 Networks---------------------
+Telemark = 1 # If you have two networks, 1 opens "Telemark's case", 0 opens "Vestfold's case"
+
+if Telemark == 1:
+	buses = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12] #PSS/E's ID of available buses for capacitor banks in Telemark: 12
+else:
+	buses = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24] #Available buses in Vestfold: 31
+	
+
+k=size(buses) # Number of AVAILABLE buses.
+bitspercb = 12 # BITS PER CAPACITOR BANK (CB) for the representation.
+x_size = k * bitspercb #each CB will have bitspercb bits and each chromosome bitspercb*k bits.
+M = pow(2,bitspercb)-1
+
+import random
+
+toolbox = base.Toolbox()
+# Attribute generator
+toolbox.register("attr_bool", random.randint, 0, 1)
+# Structure initializers
+toolbox.register("individual", tools.initRepeat, creator.Individual, toolbox.attr_bool, x_size)
+toolbox.register("individual2", tools.initRepeat, creator.Individual, toolbox.attr_bool, x_size)
+toolbox.register("population", tools.initRepeat, list, toolbox.individual)
+	
+
+def d2b(f, b):
+	n = int(f)
+	base = int(b)
+	ret = ""
+	for y in range(base-1, -1, -1):
+		ret += str((n >> y) & 1)
+	return ret
+
+def conversion(indivi,overallmaximum):
+	#x_size = int(len(str(indivi)))
+	n = bitspercb
+	xa =''
+	for j in range(x_size):
+		xa = xa + str(int(indivi[j]))
+
+	xcbs = [ float(int(xa[j*n : (j+1)*n],2))*(overallmaximum[j]-cb_min[j])/M + cb_min[j] for j in range(k) ]
+	
+	for i in range(len(xcbs)):
+		if xcbs[i] < kscb*cb_minimum_size:
+			xcbs[i] = 0.
+	return xcbs
+
+
+#   -------- This is the functino evaluating the fitness of each solution. Calls the file fitness.py ---------- #
+def evalOneMax(individual): 
+    individual_c = conversion(individual,overallmaximum) #Converts from binary representation to decimal
+    return [fitness.fit(individual_c, T, years, KE, KR,KM,Kext,Kstages,Kbreaker,cb_minimum_size, winter, Telemark, slope, constraints, buses, powers, nominal_volt, nominal_pf, replacing)[0]]
+
+# Operator registering
+toolbox.register("evaluate", evalOneMax)
+toolbox.register("mate", tools.cxTwoPoints)
+toolbox.register("mutate", tools.mutFlipBit, indpb=0.05)
+toolbox.register("select", tools.selTournament, tournsize=4)
+#toolbox.register("select", tools.selRoulette)
+
+def factor(t,p,n): #present value of annuity, p: increment losses, t: discount rate
+	r = (1+p)/(1+t)
+        return r*(1-r**n)/(1-r)
+
+
+def flows(Telemark):
+    	
+	businfo = subsystem_info('Flow', ['FROMEXNAME','TOEXNAME','PQ'], sid=1)
+	for x in businfo:
+		file3.write("\n")
+		file3.write(str(x))
+
+
+
+
+def main():
+	now = datetime.datetime.now() #Time
+	print str(now)
+	#--------------------------DATA-------------------------------------#
+        # Here you have to INSERT DATA from your own network
+        # The size of all the vectors must coincide with the number of available buses
+        
+	global cb_min, replacing, Kext, Kbreaker, x_size, k, cb_minimum_size, T, KE, KR, KM, Kstages, winter, Telemark, slope, constraints, nominal_volt, nominal_pf, nom_pf, nom_deltavolt, years, years1, years2, years3, max_power_trans, num_transf, kscb, maxpowerfactor, powers, overallmaximum
+	maxpowerfactor = 0.5 #This parameter sets the maximum power rating of the capacitor respect the power of the transformer
+	if Telemark == 1: #Maximum power allowed by transformers.
+                # Original size: 12
+		power_transformers = [100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100] #This is the total power rating of the available transformers in each available transformer station.
+		max_power_trans = [maxpowerfactor*x for x in power_transformers]
+                # num_transf contains number of transformers in second row and maximum power in Mvar in second row.
+		num_transf = [[1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],[1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]]
+		num_transf[1] = [100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100]
+
+		max_power_rvc = [10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10] #maximum power to avoid rapid voltage change higher than 3%. Data from spreadsheet
+		installedcapacity = [0.00, 0.00,0.00,0.00,0.00,0.00,0.00,0.00,0.00,0.00,0.00,0.00,0.00] #already existing capacitor banks
+		installedcapacityonfeeder = [0.00, 0.00, 0.00, 0.00, 0.00, 0.00, 0.00, 0.00, 0.00,0.00,0.00,0.00] #the only available feeder has that capacity
+		ratedvoltage = [10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10] # in kV
+		maximumpowercurrent = [50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50] #for each transformer
+		totalmaximumpowercurrent = [50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50]
+
+		overallmaximum0 = [50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50]
+		cb_min = zeros(k)
+		overallmaximum = overallmaximum0
+                Kext = [0.00, 0.00, 0.00, 0.00, 1000.00, 0.00, 0.00, 0.00, 0.00, 0.00, 0.00, 0.00, 0.00] #Cost extension of the building and feeders of each available transformer station
+
+		# Nominal voltages and power factors of all the buses in the network.
+                # The size of these vectors is the TOTAL number of buses in the network.
+                # Original size 90
+		nominal_volt = [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
+		nominal_pf = [0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95]
+		
+
+	else:
+		#Maximum power allowed by transformers.
+                # Original size: 24
+                power_transformers = [100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100]
+		max_power_trans = [maxpowerfactor*x for x in power_transformers]
+		
+                # num_transf contains number of transformers in second row and maximum power in Mvar in second row.
+		num_transf = [[1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1], \
+			      [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]]
+
+		num_transf[1] = [100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100]
+
+		max_power_rvc = [10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10]#maximum power to avoid rapid voltage change higher than 3%. Data from spreadsheet
+		installedcapacity = [0.00, 0.00,0.00,0.00,0.00,0.00,0.00,0.00,0.00,0.00,0.00,0.00,0.00, 0.00, 0.00,0.00,0.00,0.00,0.00,0.00,0.00,0.00,0.00,0.00,0.00,0.00] #already existing capacitor banks
+		installedcapacityonfeeder = [0.00, 0.00, 0.00, 0.00, 0.00, 0.00, 0.00, 0.00, 0.00,0.00,0.00,0.00, 0.00, 0.00, 0.00, 0.00, 0.00, 0.00, 0.00, 0.00, 0.00,0.00,0.00,0.00] #the only available feeder has that capacity
+		ratedvoltage = [10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10] # in kV
+		maximumpowercurrent = [50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50] #for each transformer
+		totalmaximumpowercurrent = [50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50]
+                
+		cb_min = zeros(k)
+		overallmaximum0 = [50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50]
+		overallmaximum = overallmazimum0
+                Kext = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] #Cost extension of the feeders
+                
+		# Nominal voltages and pf Checked.
+                # The size of these vectors is the TOTAL number of buses in the network.
+                # Original size: 100
+		nominal_volt = [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
+		nominal_pf = [0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95]
+		
+
+	replacing = 1 #0: if the algorithm does not replace the existing CB, 1: it replaces and the maximum is given by 'overallmaximum'
+					#2: it removes the existing CB
+	
+
+	#Removing some stations when they have no space and keeping the old capacitor banks
+	if replacing == 0:
+		removestations = [i for i, e in enumerate(installedcapacityonfeeder) if e != 0]
+		l = 0
+		for i in removestations:
+			del buses[i-l]
+			del max_power_trans[i-l]
+			del num_transf[0][i-l]
+			del num_transf[1][i-l]
+			del max_power_rvc[i-l]
+			del installedcapacity[i-l]
+			del ratedvoltage[i-l]
+			del maximumpowercurrent[i-l]
+			del totalmaximumpowercurrent[i-l]
+			del overallmaximum[i-l]
+			del overallmaximum0[i-l]
+			del Kext[i-l]
+			del cb_min[i-l]
+			l+=1
+	
+
+	
+	k=size(buses) #number of AVAILABLE buses
+	print "k: ", k
+	print "Replacing: ", replacing
+	bitspercb = 12 # BITS PER CAPACITOR BANK (CB)
+	x_size = k * bitspercb #each CB will have bitspercb bits and each chromosome 12*bitspercb
+	M = pow(2,bitspercb)-1
+	
+	toolbox = base.Toolbox()
+	# Attribute generator
+	toolbox.register("attr_bool", random.randint, 0, 1)
+	# Structure initializers
+	toolbox.register("individual", tools.initRepeat, creator.Individual, toolbox.attr_bool, x_size)
+	toolbox.register("population", tools.initRepeat, list, toolbox.individual)
+	# Operator registering
+	toolbox.register("evaluate", evalOneMax)
+	toolbox.register("mate", tools.cxTwoPoints)
+	toolbox.register("mutate", tools.mutFlipBit, indpb=0.05)
+	toolbox.register("select", tools.selTournament, tournsize=4)
+
+	#Data related to powers and transformers
+	powers=[num_transf, max_power_rvc,installedcapacity,installedcapacityonfeeder, \
+			ratedvoltage, maximumpowercurrent,totalmaximumpowercurrent, overallmaximum, overallmaximum0]
+
+	kscb = 0.5 #Modifable parameter for search range used in "Conversion" function
+	
+	
+	cb_minimum_size = 1.0 #Power in MVAr
+	#number_of_steps = 91 #Search space is number_of_steps^k, k = number of capacitors
+	nom_pf = 0.95
+	nom_deltavolt = 0.03 #Rapid voltage change
+	winter = 1 # 1 opens winter case, 0 opens summer case
+	slope = 10e10 #slope of the line that defines the out-of-the-limits costs. It has to be adjusted in function of the other costs so that it has approximately the same magnitude
+	constraints = [0., 1., 0., 0., 0., 0., k, 0., 0.] #Activate constraints on
+		#[Voltages, Power factor, voltages from rvc, harmonics, maximum current limit, minimum #CB, maximum #CB /
+		#, maximum investment, minimum capacity of cb]
+
+	if constraints[-1] == 0:
+		cb_min = zeros(k)
+	else:
+		cb_min = 0.2*array(overallmaximum0)
+
+	#----------------DATA regarding COSTS are computed in Norwegian krones (NOK). 
+        # Adapt the cost values to your needs.
+        
+	T = 2400 #Period of the year in hours
+	years = 20 #life cycle of the cbs
+	KE = 0.35 * 1000 # 0.35 NOK/kWh = 350 NOK/MWh Active power
+	KR = 30. * 1000 #30 NOK per kvar. 30000 NOK per Mvar. 
+	KM = 2000 #Cost maintenance in NOK.
+	Kbreaker = [350000, 350000, 245000, 114000] #Cost of a circuit breaker in NOK for 11kV and 22kV and the last one are the external costs.
+	Kstages = [50000, 70000] #Cost of a stage for 11kV and 22kV. Each capacitor bank is divided in stages that are switched on gradually according to the needs.
+	t = 0.045 # Discount rate
+	increment_losses = 0.002 # Per year
+	increment_reactivepower = 0.002 # Per year
+	increment_fixedcosts = 0.01 # Per year
+	years1 = factor(t,increment_losses,years)
+	years2 = factor(t,increment_reactivepower,years)
+	years3 = factor(t,increment_fixedcosts,years)
+	years = [years,years1,years2,years3]
+	#----------------------------------------------------------------------------
+
+
+	
+	#------First population
+	gn = 0 #Register generation number
+	gnkscb = 0 #Register generation number
+
+        #--------------------------   GENETIC ALGORITHM PARAMETERS -------------------------------------
+	n, CXPB, MUTPB, NGEN = 100, 0.5, 0.025, 50 
+	pop = toolbox.population(n)
+	
+	#------ Solution without CBs -------------- 
+	no_cbs = zeros(k)
+	fit2ncb = fitness.fit(no_cbs, T, years, KE,KR,KM,Kext,Kstages,Kbreaker,cb_minimum_size, winter, Telemark, slope, constraints, buses, powers, nominal_volt, nominal_pf, replacing)
+	print "Solution without CBs"
+	print "Total cost ", fit2ncb
+
+        flowsb = 0; #Optional power flows printing
+        if flowsb == 1: 
+            if Telemark == 1:
+		file3 = open("Flows Telemark.txt","a")
+		file3.write("\n \n No new CB \n")
+            else:
+		file3 = open("Flows Vestfold.txt","a")
+		file3.write("\n \n No new CB \n")
+            
+            flows(Telemark) #This function prints the power flows in each line of the network to an output file.
+        
+
+	#------------------------------------------ START OF GA---------------------------------#
+	#---------------------------------------------------------------------------------------#
+
+	print("Start of evolution")
+
+	# Evaluate the entire population
+	fitnesses = list(map(toolbox.evaluate, pop))
+	
+	for ind, fit2 in zip(pop, fitnesses):
+		ind.fitness.values = fit2
+	min_f = min(fitnesses)
+
+	print("  Evaluated %i individuals" % len(pop))
+
+	bests = [] #TO PLOT AT THE END 
+	
+	# Begin the evolution
+	for g in range(NGEN):
+
+		# Select the next generation individuals. SELECTION
+		offspring = toolbox.select(pop, n-1)
+		# Clone the selected individuals
+		offspring = list(map(toolbox.clone, offspring))
+
+		# Apply crossover and mutation on the offspring. CROSSOVER
+		for child1, child2 in zip(offspring[::2], offspring[1::2]):
+			if random.random() < CXPB:
+				toolbox.mate(child1, child2)
+				del child1.fitness.values
+				del child2.fitness.values
+
+		for mutant in offspring: #MUTATION
+			if random.random() < MUTPB:
+				toolbox.mutate(mutant)
+				del mutant.fitness.values
+
+		# Evaluate the individuals with an invalid fitness
+		invalid_ind = [ind for ind in offspring if not ind.fitness.valid]
+		fitnesses = map(toolbox.evaluate, invalid_ind)
+		#fitnesses = transform(fitnesses)
+		for ind, fit2 in zip(invalid_ind, fitnesses):
+			ind.fitness.values = fit2
+
+		# The population is entirely replaced by the offspring, (edited) except the best solution
+		best_ind = tools.selBest(pop, 1)[0]
+		pop = []
+		pop.append(best_ind) #ELITISM selection
+		pop[1:] = offspring
+
+		# Gather all the fitnesses in one list and print the stats
+		fits = [ind.fitness.values[0] for ind in pop]
+		fits2 = sorted(fits)
+		#fits2 = fits2[0:n]
+		length = len(fits2)
+		mean = sum(fits2) / length
+		sum2 = sum(x*x for x in fits2)
+		std = abs(sum2 / length - mean**2)**0.5
+	
+		min_fn = fits2[0] #BEST FITNESS
+		bests.append(min(fits)) #TO PLOT AT THE END
+		if min_fn < min_f: #MODIFICATIONS HECTOR
+			min_f = min_fn
+			gn = g
+
+						
+		if g % 10 == 0:
+			print("-- Generation %i --" % g)
+			print("Evaluated %i individuals" % len(invalid_ind))
+			print("  Min %s" % min_f)
+			print("  Max %s" % fits2[n-1])
+			print("  Avg %s" % mean)
+			print("  Std %s" % std)
+
+	print("-- End of (successful) evolution --")
+
+	
+
+	############################-RESULTS-######################### HECTOR
+	if Telemark == 1:
+		file1 = open("Telemark Solutions ESGA.txt","a")
+		file1.write("\nWinter season \n")
+		print "##################Telemark Winter########################"
+	else:
+		file1 = open("Vestfold Solutions ESGA.txt","a")
+		file1.write("\nWinter season \n")
+		print "###################Vestfold Winter#########################"
+
+
+	
+
+	best_ind = tools.selBest(pop, 1)[0]
+	print("Best individual fitness %s" % (best_ind.fitness.values))
+	min_cb = conversion(best_ind,overallmaximum)
+	print "Buses and Best individual ", zip(buses,[round(x,1) for x in min_cb])
+	print "@ generation number ", gn
+	Flosses = fitness.fit(min_cb, T, years, KE, KR, KM, Kext, Kstages, Kbreaker, cb_minimum_size, winter, Telemark, slope, constraints, buses, powers, nominal_volt, nominal_pf, replacing)
+	fitbest = toolbox.evaluate(best_ind)
+	print "Best individual fitness ", fitbest
+	now2 = datetime.datetime.now()
+	print str(now2)
+	time_elapsed = now2 - now
+	print "Elapsed time ", time_elapsed
+
+	
+	file1.write(str(now2))
+	file1.write(" \n")
+	file1.write("Constraints ")
+	file1.write(str(constraints))
+	file1.write("\n Replacement ")
+	file1.write(str(replacing))
+	file1.write(" \n")
+	file1.write("Bits per CB ")
+	file1.write(str(bitspercb))
+	file1.write(" \n")
+	file1.write("Span of time ")
+	file1.write(str(T))
+	file1.write(" \n")
+	file1.write("The optimum CBC is  = ")
+	file1.write(str(zip(buses,[round(x,1) for x in min_cb])))
+	file1.write(" \n")
+	file1.write(str(min_cb))
+	file1.write(" \n")
+	file1.write("The minimum cost is ")
+	file1.write(str(best_ind.fitness.values))
+	file1.write("\n (Total cost, Lossescosts, Reactcosts, Fixedcosts, Investment, Num. AB, Num. CB, [Active Losses, ReactiveEx, VoltageCC , Power FactorCC, Range CBsCC]) = ")
+	file1.write(str(Flosses))
+	file1.write(" \n")
+
+
+	Flosses2 = [Flosses[0]/1.e6, Flosses[7][0], Flosses[1]/1.e6, Flosses[7][1], Flosses[2]/1.e6, Flosses[4]/1.e6, Flosses[3]/1.e6, Flosses[5], Flosses[6]]
+	a = [round(float(x),1) for x in Flosses2]
+	file1.write("\n Total cost (MNOK) ")
+	file1.write(str(a[0]))
+	file1.write("\n Losses (MW) ")
+	file1.write(str(a[1]))
+	file1.write("\n Losses costs (MNOK) ")
+	file1.write(str(a[2]))
+	file1.write("\n Reactive P. Flow (Mvar) ")
+	file1.write(str(a[3]))
+	file1.write("\n Reactive P. Costs (MNOK) ")
+	file1.write(str(a[4]))
+	file1.write("\n Investment (MNOK) ")
+	file1.write(str(a[5]))
+	file1.write("\n Maintenance ")
+	file1.write(str(a[6]))
+	file1.write("\n Number of stations ")
+	file1.write(str(a[7]))
+	file1.write("\n Number of circuit breakers ")
+	file1.write(str(a[8]))
+
+	
+	file1.write(" \n \n")
+	file1.write("At generation  = ")
+	file1.write(str(gn))
+	file1.write(" \n")
+	file1.write(str([NGEN,CXPB,MUTPB,len(pop)]))
+	file1.write(" \n")
+	file1.write("Cross over probability  = ")
+	file1.write(str(CXPB))
+	file1.write(" \n")
+	file1.write("Mutation probability  = ")
+	file1.write(str(MUTPB))
+	file1.write(" \n")
+	file1.write("Number of generations  = ")
+	file1.write(str(NGEN))
+	file1.write(" \n")
+	file1.write("Population  = ")
+	file1.write(str(len(pop)))
+	file1.write(" \n")
+	file1.write("kscb1  = ")
+	file1.write(str(kscb))
+	file1.write(" \n")
+
+
+	rep = 1 #1 to have a file with report of voltages and power factors and reactive power flows, 0 otherwise.
+	networklosses.constraints_report(nominal_volt, nominal_pf, nom_pf, rep, Telemark)
+
+	if flowsb:
+            file3.write("\n \n Power flow for best solution.")
+            flows(Telemark)
+            
+	if Telemark == 1:
+		ierr = psspy.save("Telemark_new.sav")
+	else:
+		ierr = psspy.save("Vestfold_new.sav")
+
+
+	
+	plot(range(NGEN),bests, 'ro')
+	xlabel('Generations')
+	ylabel('F(x) Minimum')
+        #ymin = 2e8
+        #ymin = 4e8
+        #axis([0, NGEN, ymin, ymax]) # Select appropiate axis if desired
+	title(r'$Evolution of best solution along generations$')
+	show()
+
+if __name__ == "__main__":
+    main()
