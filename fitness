@@ -1,0 +1,107 @@
+#! /usr/bin/python
+
+__author__="HMLE"
+__date__ ="$14.mai.2013 12:55:53$"
+
+import networklosses
+from pylab import *
+
+def stages_costs(v,max_power_rvc,ratedvolt,overallmaximum0): #Counts the number of stages and circuit breakers needed for each capacitor bank
+	nr11stages = 0 #stages at 11kV
+	nr22stages = 0 #stages at 22kV
+	nr11br = 0 #breakers at 11kV
+	nr22br = 0 #breakers at 22kV
+	nrbr = 0 #Total number of breakers in use
+	cubicles = zeros(len(v))
+	for cb, i in zip(v, range(len(v))):
+		if cb > 0:
+			if cb > overallmaximum0[i]:
+				cubicles[i] = 2
+			else:
+				cubicles[i] = 1
+			if ratedvolt[i] > 12:
+				nr22stages += floor((cb/cubicles[i])/max_power_rvc[i])+1
+				nr22br += cubicles[i]
+			else:
+				nr11stages += floor((cb/cubicles[i])/max_power_rvc[i])+1
+				nr11br += cubicles[i]
+				
+	return nr11stages, nr22stages, nr11br, nr22br, nrbr, cubicles
+
+
+def reac_cost2(RL,KR):
+	RL = abs(RL)
+	if RL > 20:
+		m = int(RL / 5.)
+		RL = 5*m
+		rl = RL*KR
+	else:
+		rl = 0
+	return rl
+
+def invest_cost1(v):
+	m = 19672.131147540986
+	n = 58196.72131147541
+	cost = 0.
+	for cb in v:
+		if cb > 0:
+			cost += m * cb + n
+	return cost
+
+def invest_cost2(v,ratedvolt, cubicles):
+	m11 = 25550. #in NOK/Mvar. 11kV. Approximation from supplier.
+	m22 = 23661. #in NOK/Mvar. 22kV. ".
+	n11 = 98566. #in NOK/cubible. 11kV. ".
+	n22 = 128844. #in NOK/cubible. 22kV. ".
+	cost = 0.
+	for cb,i in zip(v, range(len(v))):
+		if cb > 0. :
+			if ratedvolt[i] > 12:
+				cost += m22 * cb + n22 * cubicles[i]
+			else:
+				cost += m11 * cb + n11 * cubicles[i]
+	return cost
+
+def feederextension(v,Kext):
+	extension = 0.
+	for cb, kost in zip(v,Kext):
+		if cb>0:
+			extension += kost
+	return extension
+
+
+def fit(v, T, years, KE, KR, KM, Kext, Kstages, Kbreaker, cb_minimum_size, winter, Telemark, slope, constraints, buses, powers, nominal_volt, nominal_pf, replacing):
+	
+	n1 = len(v)
+
+	nr11stages, nr22stages, nr11br, nr22br, nrbr, cubicles = stages_costs(v, powers[1],powers[4],powers[-1]) #Counting total number of stages and breakers inside stations
+
+	ncb = len([x for x in v if x > 0]) #Number of transformer stations with a new capacitor banks
+	fixed_omcb_cost = ncb * KM #fixed maintenance costs in NOK
+
+	investment = invest_cost2(v,powers[4], cubicles) + feederextension(v,Kext) + nr11stages * Kstages[0]  + nr22stages * Kstages[1] + nr11br*Kbreaker[0] +  nr22br*Kbreaker[1] + ncb*Kbreaker[2] + sum(cubicles)*Kbreaker[3] #Total investment
+
+	#This function returns the array (Active Power losses, Reactive power in exchange bus 100, Voltage constraints costs, Power factor constraints costs)
+	Flosses = networklosses.losses(v,buses,Telemark, slope, cb_minimum_size, constraints, nominal_volt, nominal_pf, powers, replacing)
+
+	reactive_bill = reac_cost2(Flosses[1],KR)
+
+	# Minimum number of CBs constraint
+	mincb_constraint = 0
+	if ncb < constraints[5]:
+		mincb_constraint = slope*slope
+
+	# Maximum number of CBs constraint
+	maxcb_constraint = 0
+	if ncb > constraints[6]:
+		maxcb_constraint = ncb*slope
+
+	# Costs in NOK for the objective function in present value
+	a = KE * T * years[1] * Flosses[0] #Active power losses
+	b = years[2] * reactive_bill	#Reactive power charge
+	c = years[3] * fixed_omcb_cost  #Maintenance costs
+
+	#----Cost function: Active losses + Reactive power billing + Fixed costs + Investment cost + Constraints costs + minimum number of CBs constraint
+	r = a + b + constraints[0]*Flosses[2] + constraints[1]*Flosses[3] + constraints[2]*Flosses[4] + mincb_constraint + maxcb_constraint
+	
+	return [r, a, b, c, investment, ncb, nrbr, Flosses]
