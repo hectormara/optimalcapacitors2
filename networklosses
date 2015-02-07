@@ -1,0 +1,199 @@
+# -*- coding: utf-8 -*-
+
+from pylab import *
+import psspy
+import redirect
+
+def open_winter(Telemark):
+	#--------------------------open the file
+	if Telemark == 1:
+                ############################################################
+                #                                                          #
+                #                   REMEMBER TO SELECT THE PATH            #
+                #                     OF YOUR PSS/E CASE *HERE*            #
+                #                                                          #
+                ############################################################
+		
+                psspy.case(r"""C:\Folder\Telemark.sav""") # <------ *HERE*
+		
+                # There are two systems. 1: Is for the whole network. 0: Is for the network with the internal buses.
+                # Internal buses are those owned by your utility company.
+                # The program will evaluate the reactive power exchange between external buses and internal buses.
+                
+                psspy.bsys(0,0,[ 56.0, 132.],0,[],85,[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85],0,[],0,[])
+		psspy.bsys(1,0,[ 1.0, 0.1E+05],0,[],90,[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90],0,[],0,[])
+		
+	else:
+		psspy.case(r"""C:\Folder\Vestfold.sav""") # <------ *HERE*
+		psspy.bsys(0,0,[ 1.0, 0.1E+05],0,[],95,[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95],0,[],0,[])
+                psspy.bsys(1,0,[ 1.0, 0.1E+05],0,[],100,[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100],0,[],0,[])
+		
+
+def volt_cost(slope, nominal_volt):
+	subId = 1
+	busStatusFlag = 2
+	paramStrList = ['PU']
+	ierr, voltageList = psspy.abusreal(subId, busStatusFlag, paramStrList)
+	l = voltageList[0]
+	cost = 0
+	for v1, v2 in zip(l, nominal_volt):
+		if abs(v1-v2) > 0.03: # Variation over 3% is penalized
+			cost += abs(v1-v2)*slope
+	return cost
+
+def cb_cons(slope,v,cb_minimum_size):
+	cost = 0
+	for i in range(len(v)):
+		if v[i] > 10e-3:
+			if v[i] < cb_minimum_size/2:
+				cost += v[i]*slope
+			elif v[i] < cb_minimum_size:
+				cost += (cb_minimum_size-v[i])*slope*slope
+	return cost
+
+def constraints_report(nominal_volt, nominal_pf, nom_pf, rep, Telemark):
+	#Voltage levels
+	subId = 1
+	busStatusFlag = 2
+	paramStrList = ['PU']
+	ierr, voltageList = psspy.abusreal(subId, busStatusFlag, paramStrList)
+	paramStrList = ['NUMBER']
+	ierr, labellist = psspy.abusint(subId, busStatusFlag, paramStrList)
+
+	#Loads MW and MVA
+	paramStrList = ['MVAACT']
+	ierr, xarray = psspy.alodbuscplx(1, 4, paramStrList)
+	paramStrList = ['NUMBER']
+	ierr, xarray2 = psspy.alodbusint(1, 4, paramStrList)
+	l = voltageList[0]
+	l2 = labellist[0]
+	l3 = xarray[0]
+	l4 = xarray2[0]
+
+	if Telemark == 1:
+		file2 = open("Report Telemark Solutions.txt","a")
+		file2.write("\n \n Winter season \n")
+	else:
+		file2 = open("Report Vestfold Solutions.txt","a")
+		file2.write("\n \n Winter season \n")
+	
+	print "Bus     New Voltage       Old voltage      Danger"
+	file2.write("Bus     New Voltage       Old voltage      Danger")
+	for v1, v2, la in zip(l, nominal_volt,l2):
+		
+		if rep:
+			file2.write("\n"), file2.write(str(la)), file2.write("    "),  file2.write(str(v1)), file2.write("     "),  file2.write(str(v2))
+			if abs(v1-v2) > 0.03:
+				file2.write("     DANGER")
+				print la, "    ", v1, "     ", v2,
+				print "1111"
+		elif abs(v1-v2) > 0.03:
+				print la, "    ", v1, "     ", v2,
+				print "1111"
+
+		
+
+	print "\n Bus     New PF       Old PF      Danger"
+	file2.write("\n Bus     New PF       Old PF      Danger")
+	for pf1, pf2, la in zip(l3, nominal_pf, l4):
+			if abs(pf1.real) > 0:
+				b = math.atan(pf1.imag/abs(pf1.real))
+			else:
+				b = math.pi/2
+			b = math.cos(b)
+			
+			if rep:
+				file2.write("\n"), file2.write(str(la)), file2.write("    "),  file2.write(str(b)), file2.write("     "),  file2.write(str(pf2))
+				if abs(b-pf2) > 0.1:
+					file2.write("     DANGER")
+					print  la, "      ", b, "       ", pf2,
+			elif abs(b-pf2) > 0.1:
+					print  la, "      ", b, "       ", pf2,
+					print "1111"
+			
+		
+def pf_costs(slope, nominal_pf): # Power factor
+	paramStrList = ['MVAACT']
+	ierr, xarray = psspy.alodbuscplx(1, 4, paramStrList)
+	paramStrList = ['NUMBER']
+	ierr, xarray2 = psspy.alodbusint(1, 4, paramStrList)
+	l = xarray[0]
+	la = xarray2[0]
+	powerfactors = []
+	cost = 0
+	
+	for pf1, pf2, i in zip(l, nominal_pf, la):
+		if abs(pf1.real) > 0:
+			b = math.atan(pf1.imag/abs(pf1.real))
+		else:
+			b = math.pi/2
+		b = math.cos(b)
+		if abs(b-pf2) > 0.1 and b < 0.94:
+			cost += abs(b-pf2)*slope
+	return cost
+
+def losses(v, buses, Telemark, slope, cb_minimum_size, constraints, nominal_volt, nominal_pf, powers, replacing):
+
+	
+	redirect.psse2py()
+
+	psspy.psseinit(2000)
+	ierr = psspy.progress_output(islct=6)
+
+	
+	open_winter(Telemark)
+	
+	installedcapacity = powers[2]
+	installedcapacityonfeeder = powers[3]
+	overallmaximum0 = powers[8]
+        
+	#-------------------------- Modify the reactive power of the buses with the power of each CB
+
+	_i=psspy.getdefaultint()
+	i=0
+
+        # Here in case any actual capacitor bank is removed, the reactive power load should be increased.
+	if replacing == 1:
+		for x in buses:
+			if v[i] > 0:                        
+                            psspy.load_data_4(x, '2', [1,_i,1,1,1,1], [0.,-v[i],0.,0.,0.,0.])
+                            if installedcapacityonfeeder[i] > 0 and v[i] <= overallmaximum0[i]:
+                                    psspy.load_data_4(x, '3', [1,_i,1,1,1,1], [0.,installedcapacityonfeeder[i],0.,0.,0.,0.]) #this number '3' was '2' which was wrong
+                            elif v[i] > overallmaximum0[i]:
+                                    psspy.load_data_4(x, '3', [1,_i,1,1,1,1], [0.,installedcapacity[i],0.,0.,0.,0.])
+                            i+=1
+	elif replacing == 2:
+		for x in buses:
+			psspy.load_data_4(x, '2', [1,_i,1,1,1,1], [0.,installedcapacity[i]-v[i],0.,0.,0.,0.])
+			i+=1
+	else:
+		for x in buses:
+			psspy.load_data_4(x, '2', [1,_i,1,1,1,1], [0.,-v[i],0.,0.,0.,0.])
+			i+=1
+
+	#----------------------- Load flow.
+
+	psspy.fnsl([1, 0, 0, 1, 1, 0, 0, 0])
+
+	#------------------- Get active power losses.
+
+	ierr, xarray = psspy.aflowcplx(0, 1, 1, 1, 'PQLOSS')
+	a = sum(array(xarray))/2
+
+        # ----------------- Get reactive power exchange between external and internal networks. Note the parameters in aflowcplx.
+	ierr, exch = psspy.aflowcplx(0, 1, 2, 1, 'PQ')
+
+	S = sum(array(exch))
+	Q = -S.imag
+
+
+	#print "Return Reactive"
+	#--------------Constraints
+	#-------VOLTAGE range +/-3%
+	voltage_costs = volt_cost(slope, nominal_volt)
+	#-------POWER FACTOR > 0.95
+	powerfactor_costs = pf_costs(slope, nominal_pf)
+	#-------CBS WITH ALLOWED CAPACITY RANGE
+	range_cb = cb_cons(slope,v,cb_minimum_size)
+	
+	return [a, Q, voltage_costs, powerfactor_costs, range_cb]
